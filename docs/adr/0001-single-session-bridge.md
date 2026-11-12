@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. The decision stands; names changed later: `SessionChannel` is now `ChannelHostPort.fetchSession` ([ADR-0009](0009-flows-return-typed-results.md)), `LegacySessionStore` is now `SessionStore`/`MirroredSessionStore` ([ADR-0007](0007-session-storage-expand-migrate-contract.md)), and the reverse direction is [ADR-0008](0008-flutter-writes-back-through-one-commit.md).
 
 ## Context
 

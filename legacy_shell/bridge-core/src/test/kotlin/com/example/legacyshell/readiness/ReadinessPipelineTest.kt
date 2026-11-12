@@ -1,67 +1,82 @@
 package com.example.legacyshell.readiness
 
-import com.example.legacyshell.session.InMemorySessionStore
-import com.example.legacyshell.session.LegacySession
+import com.example.legacyshell.navigation.NativeScreen
+import com.example.legacyshell.navigation.StartDestination
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 
 class ReadinessPipelineTest {
 
-    @Test
-    fun `run returns Ready when every gate passes`() {
-        val pipeline = ReadinessPipeline(listOf(ReadinessGate { ReadinessResult.Pass }, ReadinessGate { ReadinessResult.Pass }))
+    private val greeting = ContextKey<String>("greeting")
 
-        assertEquals(ReadinessOutcome.Ready, pipeline.run())
+    @Test
+    fun `threads context from gate to gate`() {
+        val outcome = ReadinessPipeline(
+            listOf(
+                readinessGate("writes") { GateResult.Proceed(it.with(greeting, "hello")) },
+                readinessGate("reads") { ctx -> GateResult.Proceed(ctx.with(greeting, ctx[greeting] + " world")) },
+            ),
+        ).run()
+
+        assertIs<ReadinessOutcome.Ready>(outcome)
+        assertEquals("hello world", outcome.context[greeting])
     }
 
     @Test
-    fun `run stops at the first blocking gate`() {
-        val secondGateCalled = BooleanArray(1)
-        val gates = listOf(
-            ReadinessGate { ReadinessResult.Block("first gate blocked") },
-            ReadinessGate {
-                secondGateCalled[0] = true
-                ReadinessResult.Pass
-            },
-        )
+    fun `stops at the first redirect and names the gate`() {
+        var laterGateRan = false
+        val login = StartDestination.Native(NativeScreen.LOGIN)
 
-        val outcome = ReadinessPipeline(gates).run()
+        val outcome = ReadinessPipeline(
+            listOf(
+                readinessGate("session") { GateResult.Redirect(login) },
+                readinessGate("later") { laterGateRan = true; GateResult.Proceed(it) },
+            ),
+        ).run()
 
-        assertIs<ReadinessOutcome.Blocked>(outcome)
-        assertEquals("first gate blocked", outcome.reason)
-        assertEquals(false, secondGateCalled[0])
+        assertEquals(ReadinessOutcome.Redirected(login, byGate = "session"), outcome)
+        assertEquals(false, laterGateRan)
     }
 
     @Test
-    fun `SessionPresentGate blocks when there is no session`() {
-        val gate = SessionPresentGate(InMemorySessionStore(initial = null))
+    fun `stops at a halt with a typed blocker`() {
+        val outcome = ReadinessPipeline(
+            listOf(readinessGate("version") { GateResult.Halt(Blocker.UpdateRequired("store://app")) }),
+        ).run()
 
-        assertEquals(ReadinessResult.Block("No session"), gate.check())
+        assertEquals(ReadinessOutcome.Halted(Blocker.UpdateRequired("store://app"), byGate = "version"), outcome)
     }
 
     @Test
-    fun `SessionPresentGate passes when a session exists`() {
-        val gate = SessionPresentGate(
-            InMemorySessionStore(LegacySession(userId = "u1", displayName = "Ada", authToken = "tok")),
-        )
+    fun `a throwing gate halts with Internal instead of crashing app start`() {
+        val outcome = ReadinessPipeline(
+            listOf(readinessGate("flaky") { error("disk on fire") }),
+        ).run()
 
-        assertEquals(ReadinessResult.Pass, gate.check())
+        assertEquals(ReadinessOutcome.Halted(Blocker.Internal("flaky", "disk on fire"), byGate = "flaky"), outcome)
     }
 
     @Test
-    fun `MinimumAppVersionGate blocks below the minimum`() {
-        val gate = MinimumAppVersionGate(currentVersionCode = 5, minimumVersionCode = 10)
+    fun `reports progress before each gate and once at the end`() {
+        val events = mutableListOf<ReadinessProgress>()
+
+        ReadinessPipeline(
+            listOf(readinessGate("a") { GateResult.Proceed(it) }, readinessGate("b") { GateResult.Proceed(it) }),
+        ).run(onProgress = events::add)
 
         assertEquals(
-            ReadinessResult.Block("App version 5 is below minimum 10"),
-            gate.check(),
+            listOf(ReadinessProgress(0, 2, "a"), ReadinessProgress(1, 2, "b"), ReadinessProgress(2, 2, null)),
+            events,
         )
     }
 
     @Test
-    fun `MinimumAppVersionGate passes at or above the minimum`() {
-        assertEquals(ReadinessResult.Pass, MinimumAppVersionGate(10, 10).check())
-        assertEquals(ReadinessResult.Pass, MinimumAppVersionGate(11, 10).check())
+    fun `MinimumAppVersionGate halts below the minimum and passes at or above it`() {
+        assertEquals(
+            GateResult.Halt(Blocker.UpdateRequired("store://app")),
+            MinimumAppVersionGate(5, 10, "store://app").check(ReadinessContext.EMPTY),
+        )
+        assertIs<GateResult.Proceed>(MinimumAppVersionGate(10, 10, "store://app").check(ReadinessContext.EMPTY))
     }
 }

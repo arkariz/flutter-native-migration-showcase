@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. Extended by [ADR-0011](0011-one-versioned-bridge-contract.md): both sides are now also tested against one shared contract file. The Dart decoding described here now lives in `SessionPayload.fromChannel` and `ChannelHostPort`.
 
 ## Context
 

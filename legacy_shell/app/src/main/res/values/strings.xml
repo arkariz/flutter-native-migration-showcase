@@ -10,4 +10,11 @@
     <string name="home_profile_button">Profile</string>
 
     <string name="legacy_profile_title">Profile (legacy, native)</string>
+
+    <string name="legacy_help_title">Help (legacy, native)</string>
+    <string name="legacy_help_body">Opened from Flutter through navigation.openNative.</string>
+
+    <string name="blocker_update_required">This version is no longer supported. Update to continue.</string>
+    <string name="blocker_update_action">Update</string>
+    <string name="blocker_internal">Couldn\'t start the app (%1$s check failed).</string>
 </resources>

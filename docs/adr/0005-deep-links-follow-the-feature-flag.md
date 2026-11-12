@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted. The decision stands; names changed later: `DeepLinkRouter` now returns the shared `StartDestination?` and asks `MigrationRoutes`, the one flag reader ([ADR-0012](0012-readiness-gates-return-typed-outcomes.md) uses the same type for readiness redirects).
 
 ## Context
 

@@ -8,6 +8,10 @@ import android.content.Context
  * See [RealFlutterEngineHost] and docs/adr/0001.
  */
 interface FlutterEngineHost {
-    /** Launches Flutter at [route] (e.g. "profile", "settings"). */
-    fun launchRoute(context: Context, sessionBridge: SessionBridge, route: String)
+    /**
+     * Launches Flutter at [route]. With a [flowId], the launch is a *flow*: the caller
+     * registered on the `FlowResultBus` under that id and gets exactly one result back
+     * (docs/adr/0009). Without one, it's a plain screen.
+     */
+    fun launchRoute(context: Context, route: String, flowId: String? = null)
 }

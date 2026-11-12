@@ -1,24 +1,42 @@
 package com.example.legacyshell.readiness
 
+import com.example.legacyshell.navigation.StartDestination
+
 /**
- * Runs a fixed list of [ReadinessGate]s in order, stopping at the first
- * [ReadinessResult.Block] (see docs/adr/0004).
+ * Runs [gates] in order, threading a [ReadinessContext] through them and stopping at
+ * the first [GateResult.Redirect] or [GateResult.Halt] (docs/adr/0012). A gate that
+ * throws becomes [Blocker.Internal] instead of crashing app start.
  */
 class ReadinessPipeline(private val gates: List<ReadinessGate>) {
 
-    fun run(): ReadinessOutcome {
-        for (gate in gates) {
-            when (val result = gate.check()) {
-                is ReadinessResult.Block -> return ReadinessOutcome.Blocked(gate, result.reason)
-                ReadinessResult.Pass -> continue
+    fun run(
+        initial: ReadinessContext = ReadinessContext.EMPTY,
+        onProgress: (ReadinessProgress) -> Unit = {},
+    ): ReadinessOutcome {
+        var context = initial
+        gates.forEachIndexed { index, gate ->
+            onProgress(ReadinessProgress(completed = index, total = gates.size, currentGate = gate.name))
+            val result = try {
+                gate.check(context)
+            } catch (e: Exception) {
+                GateResult.Halt(Blocker.Internal(gate.name, e.message ?: e::class.simpleName.orEmpty()))
+            }
+            when (result) {
+                is GateResult.Proceed -> context = result.context
+                is GateResult.Redirect -> return ReadinessOutcome.Redirected(result.destination, byGate = gate.name)
+                is GateResult.Halt -> return ReadinessOutcome.Halted(result.blocker, byGate = gate.name)
             }
         }
-        return ReadinessOutcome.Ready
+        onProgress(ReadinessProgress(completed = gates.size, total = gates.size, currentGate = null))
+        return ReadinessOutcome.Ready(context)
     }
 }
 
-/** The outcome of running a [ReadinessPipeline]. */
 sealed interface ReadinessOutcome {
-    data object Ready : ReadinessOutcome
-    data class Blocked(val gate: ReadinessGate, val reason: String) : ReadinessOutcome
+    data class Ready(val context: ReadinessContext) : ReadinessOutcome
+    data class Redirected(val destination: StartDestination, val byGate: String) : ReadinessOutcome
+    data class Halted(val blocker: Blocker, val byGate: String) : ReadinessOutcome
 }
+
+/** Reported before each gate runs and once after the last — enough to drive a splash progress bar. */
+data class ReadinessProgress(val completed: Int, val total: Int, val currentGate: String?)

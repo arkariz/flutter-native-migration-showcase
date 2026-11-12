@@ -1,53 +1,66 @@
 package com.example.legacyshell.bridge
 
 import android.content.Context
+import android.content.Intent
+import com.example.legacyshell.flow.FlowResultBus
+import com.example.legacyshell.navigation.NativeScreen
+import com.example.legacyshell.navigation.activityClass
+import com.example.legacyshell.session.SessionStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
 
 /**
- * Real [FlutterEngineHost]: for each distinct [route], creates and caches a
- * [FlutterEngine], registers [ChannelMethodHandler]s onto it via
- * [ChannelRegistry] *before* the Dart entrypoint runs, then launches
- * [FlutterActivity] against that cached engine. See docs/adr/0001 for why
- * Flutter calls rather than native pushing — this ordering (handlers
- * registered, then entrypoint executed) is what makes that safe.
+ * Real [FlutterEngineHost]. Registers every [ChannelMethodHandler] *before* the Dart
+ * entrypoint runs, so Flutter's first calls (`session.fetch`, `deeplink.initialRoute`)
+ * always find a listener (docs/adr/0001).
  *
- * Requires the real Flutter engine embedding dependency (see
- * `app/build.gradle.kts`) — not pinned in this repo, see README.md.
+ * Two engine lifetimes:
+ * - **Screens** (no flow id) get one cached engine per route, reused across launches.
+ * - **Flows** get a fresh engine per launch that is destroyed with its activity, so a
+ *   second sign-in never resumes a half-finished first one (docs/adr/0009).
+ *
+ * Requires the real Flutter engine embedding dependency (see `app/build.gradle.kts`).
  */
-class RealFlutterEngineHost(private val appContext: Context) : FlutterEngineHost {
+class RealFlutterEngineHost(
+    private val appContext: Context,
+    private val sessionStore: SessionStore,
+    private val flowResults: FlowResultBus,
+) : FlutterEngineHost {
 
-    override fun launchRoute(context: Context, sessionBridge: SessionBridge, route: String) {
-        val id = engineId(route)
-        if (FlutterEngineCache.getInstance().get(id) == null) {
-            createAndCacheEngine(sessionBridge, route)
+    override fun launchRoute(context: Context, route: String, flowId: String?) {
+        val engineId = if (flowId == null) "screen_$route" else "flow_$flowId"
+        val cache = FlutterEngineCache.getInstance()
+        if (flowId != null || cache.get(engineId) == null) {
+            cache.put(engineId, createEngine(route, flowId, onFlowFinished = { cache.remove(engineId) }))
         }
 
         context.startActivity(
-            FlutterActivity.withCachedEngine(id).build(context),
+            FlutterActivity.withCachedEngine(engineId)
+                .destroyEngineWithActivity(flowId != null)
+                .build(context),
         )
     }
 
-    private fun createAndCacheEngine(sessionBridge: SessionBridge, route: String): FlutterEngine {
+    private fun createEngine(route: String, flowId: String?, onFlowFinished: () -> Unit): FlutterEngine {
         val engine = FlutterEngine(appContext)
 
-        // The handlers below are registered before this call, so they're
-        // already listening by the time flutter_module's main() issues its
-        // "session.fetch" / "deeplink.initialRoute" calls.
         ChannelRegistry(engine).registerAll(
             listOf(
-                SessionChannelHandler(sessionBridge),
+                SessionChannelHandler(SessionBridge(sessionStore)),
                 DeepLinkChannelHandler(route),
+                FlowChannelHandler(flowId, flowResults, ::openNative, onFlowFinished),
             ),
         )
 
         engine.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
-
-        FlutterEngineCache.getInstance().put(engineId(route), engine)
         return engine
     }
 
-    private fun engineId(route: String) = "engine_$route"
+    private fun openNative(screen: NativeScreen) {
+        appContext.startActivity(
+            Intent(appContext, screen.activityClass()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
 }

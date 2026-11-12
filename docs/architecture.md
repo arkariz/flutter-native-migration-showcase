@@ -1,159 +1,182 @@
 # Architecture
 
 This repo demonstrates a gradual, screen-by-screen native→Flutter migration
-(the [Strangler Fig pattern](https://martinfowler.com/bliki/StranglerFigApplication.html)):
-old and new code live in the same app, one screen at a time moves over behind
-a feature flag, and every crossing point between the two sides — session
-data, deep-link routing, app readiness — is explicit and testable instead of
-ad-hoc calls scattered across the codebase.
+(the [Strangler Fig pattern](https://martinfowler.com/bliki/StranglerFigApplication.html)).
+Old and new code live in the same app, and each screen moves over behind a
+feature flag. Every crossing point between the two sides is explicit, typed and
+tested: session data in both directions, start routing, flow results, and
+navigation back to native.
 
 ## Module boundary
 
 ```mermaid
 flowchart TB
     subgraph legacy["legacy_shell (native Android, Kotlin)"]
-        Login["LoginActivity<br/>(dummy login)"]
-        Main["MainActivity<br/>runs ReadinessPipeline,<br/>reads MigrationFlags.profileScreenOnFlutter"]
-        DeepLink["DeepLinkActivity<br/>resolves via DeepLinkRouter"]
-        LegacyProfile["LegacyProfileActivity<br/>(old native screen)"]
-        Store["LegacySessionStore<br/>(SharedPreferences)"]
+        Main["MainActivity (launcher)<br/>runs ReadinessPipeline"]
+        Login["LoginActivity"]
+        DeepLink["DeepLinkActivity"]
+        LegacyProfile["LegacyProfileActivity"]
+        Help["LegacyHelpActivity"]
+        Routes["MigrationRoutes<br/>(the one flag reader)"]
+        Store["MirroredSessionStore<br/>legacy v1 ⇄ new v2 by phase"]
+        Bus["FlowResultBus"]
         Host["RealFlutterEngineHost"]
-        Registry["ChannelRegistry"]
-        SessionH["SessionChannelHandler<br/>answers 'session.fetch'"]
-        DeepLinkH["DeepLinkChannelHandler<br/>answers 'deeplink.initialRoute'"]
+        SessionH["SessionChannelHandler<br/>fetch · commit"]
+        DeepLinkH["DeepLinkChannelHandler<br/>initialRoute"]
+        FlowH["FlowChannelHandler<br/>complete · openNative"]
 
-        Login -->|writes session| Store
+        Main --> Routes
+        DeepLink --> Routes
         Main --> Store
-        Main -->|flag = false| LegacyProfile
-        Main -->|flag = true| Host
-        DeepLink --> Host
-        Host --> Registry
-        Registry --> SessionH
-        Registry --> DeepLinkH
+        Login --> Store
+        Routes -->|native| LegacyProfile
+        Routes -->|flutter| Host
+        Main -.->|registers flow id| Bus
+        Host --> SessionH & DeepLinkH & FlowH
         SessionH --> Store
+        FlowH --> Bus
+        FlowH -->|allowlist| Help
     end
 
     subgraph flutter["flutter_module (Flutter, Dart)"]
-        Main_dart["main()"]
-        Channel["SessionChannel<br/>calls 'session.fetch'"]
-        RouteChannel["InitialRouteChannel<br/>calls 'deeplink.initialRoute'"]
-        Payload["SessionPayload"]
-        ProfileScreen["ProfileScreen"]
-        SettingsScreen["SettingsScreen<br/>(Flutter-only, no legacy version)"]
+        MainDart["main()"]
+        Port["HostPort<br/>ChannelHostPort | StandaloneHostPort"]
+        SignIn["SignInScreen → SignInOutput"]
+        Coord["SignInFlowCoordinator"]
+        Profile["ProfileScreen"]
+        Settings["SettingsScreen"]
 
-        Main_dart --> Channel
-        Main_dart --> RouteChannel
-        Channel -->|decodes| Payload
-        Payload --> ProfileScreen
-        Main_dart -->|route == 'settings'| SettingsScreen
-        Main_dart -->|route == 'profile'| ProfileScreen
+        MainDart --> Port
+        SignIn --> Coord --> Port
+        Profile -->|onOpenHelp| Port
+        MainDart --> SignIn & Profile & Settings
     end
 
-    SessionH -.->|"MethodChannel<br/>'migration_showcase/session'"| Channel
-    DeepLinkH -.->|"MethodChannel<br/>'migration_showcase/deeplink'"| RouteChannel
+    Port <-.->|"contract/bridge_contract.json<br/>3 channels · 5 methods · 5 error codes"| SessionH & DeepLinkH & FlowH
 
     style legacy fill:#f5f5f5,stroke:#999
     style flutter fill:#eef6ff,stroke:#6699cc
 ```
 
-**Two crossing points, one registration mechanism**: `migration_showcase/session`
-(`SessionBridge`/`SessionChannelHandler` ↔ `SessionChannel`) and
-`migration_showcase/deeplink` (`DeepLinkRouter`/`DeepLinkChannelHandler` ↔
-`InitialRouteChannel`), both wired onto the engine by one `ChannelRegistry`.
-See [ADR-0001](adr/0001-single-session-bridge.md),
-[ADR-0005](adr/0005-deep-links-follow-the-feature-flag.md), and
-[ADR-0006](adr/0006-channel-registry.md).
+`bridge-core` (pure Kotlin, no Android) holds everything with a decision in it:
+the stores and migrator, the codecs, `SessionBridge`, `MigrationRoutes`,
+`DeepLinkRouter`, readiness, `FlowResultBus` and `NativeRoutes`. `:app` only
+adapts it to Activities and engines.
 
-## The fetch sequence — why there's no race
+## Startup: readiness decides, typed
 
-Flutter calls native, not the other way around, and native's handlers are
-registered *before* the Dart entrypoint runs. This ordering is what makes the
-hand-off safe without a "wait for Flutter to be ready" signal:
+```mermaid
+flowchart LR
+    M["SessionSchemaMigrationGate<br/>backfill v1 → v2"] --> V["MinimumAppVersionGate"] --> S["SessionGate"]
+    V -- too old --> H1["Halt(UpdateRequired)"]
+    S -- Active --> R["Ready(context with SESSION)"]
+    S -- "Expired → refresh ok" --> R
+    S -- "Expired → refresh failed<br/>(clear both schemas)" --> RD["Redirect(routes.signIn())"]
+    S -- Absent --> RD
+```
+
+A gate that throws becomes `Halt(Internal)`. `MainActivity` handles `Ready`,
+`Redirected` and `Halted` with one exhaustive `when` and no string comparison.
+See [ADR-0012](adr/0012-readiness-gates-return-typed-outcomes.md).
+
+## No race on the way in
+
+Flutter calls native, and native registers every handler **before** the Dart
+entrypoint runs ([ADR-0001](adr/0001-single-session-bridge.md),
+[ADR-0006](adr/0006-channel-registry.md)):
+
+```mermaid
+sequenceDiagram
+    participant Host as RealFlutterEngineHost
+    participant Engine as FlutterEngine
+    participant Dart as main()
+    participant Port as ChannelHostPort
+
+    Host->>Engine: create engine
+    Host->>Engine: register session, deeplink and flow handlers
+    Note over Engine: all three listening
+    Host->>Engine: executeDartEntrypoint()
+    Engine->>Dart: main()
+    Dart->>Port: initialRoute()
+    Port-->>Dart: "login" / "profile" / "settings"
+    Dart->>Port: fetchSession()
+    Port-->>Dart: SessionPayload, or null on NO_SESSION
+    Dart->>Dart: runApp(screen for route)
+```
+
+## A Flutter flow, end to end (sign-in)
+
+With `loginScreenOnFlutter` on, signing in is a round trip that starts and ends
+in native readiness ([ADR-0008](adr/0008-flutter-writes-back-through-one-commit.md),
+[ADR-0009](adr/0009-flows-return-typed-results.md)):
 
 ```mermaid
 sequenceDiagram
     participant Main as MainActivity
+    participant Bus as FlowResultBus
     participant Host as RealFlutterEngineHost
-    participant Registry as ChannelRegistry
-    participant Engine as FlutterEngine
-    participant SessionH as SessionChannelHandler
-    participant Store as LegacySessionStore
-    participant Dart as flutter_module main()
-    participant Channel as SessionChannel
+    participant Coord as SignInFlowCoordinator
+    participant Port as ChannelHostPort
+    participant Store as MirroredSessionStore
 
-    Main->>Host: launchRoute(route = "profile")
-    Host->>Engine: create FlutterEngine
-    Host->>Registry: registerAll([SessionChannelHandler, DeepLinkChannelHandler])
-    Registry->>Engine: MethodChannel(...).setMethodCallHandler(...) for each
-    Note over Engine: both handlers now listening
-    Host->>Engine: executeDartEntrypoint()
-    Engine->>Dart: run main()
-    Dart->>Channel: SessionChannel.fetch()
-    Channel->>Engine: invokeMethod("session.fetch")
-    Engine->>SessionH: onMethodCall()
-    SessionH->>Store: read()
-    Store-->>SessionH: LegacySession
-    SessionH-->>Channel: result map
-    Channel-->>Dart: SessionPayload
-    Dart->>Dart: runApp(ProfileScreen)
+    Main->>Main: readiness → Redirect(Flutter "login")
+    Main->>Bus: register("signIn", listener)
+    Main->>Host: launchRoute("login", flowId = "signIn")
+    Note over Host: fresh engine, destroyed with its activity
+    Coord->>Port: commitSession(session)
+    Port->>Store: session.commit → write (every schema the phase writes)
+    Coord->>Port: completeFlow(Completed)
+    Port->>Bus: flow.complete → deliver once
+    Bus->>Main: listener: start MainActivity
+    Main->>Main: readiness → Ready (finds the session)
 ```
 
-See [ADR-0001](adr/0001-single-session-bridge.md) for why this is a pull
-(Flutter asks) rather than a push (native sends proactively), and
-[ADR-0006](adr/0006-channel-registry.md) for why registration goes through
-`ChannelRegistry` instead of being hand-wired per channel.
+If the commit fails, the flow isn't completed and the screen shows the error
+code. Cancel and system back report `Cancelled`.
 
-## Feature-flag routing (manual navigation and deep links)
+## Storage migration
 
-`MainActivity` is the only place `MigrationFlags.profileScreenOnFlutter` is
-read for a manual tap. `DeepLinkActivity` reads the *same* flag — via
-`DeepLinkRouter`, not a copy of the logic — when a
-`migrationshowcase://open/profile` link arrives. Both implementations of the
-Profile screen ship in the same build; the flag decides which one opens,
-regardless of how the user got there. See
-[ADR-0002](adr/0002-feature-flag-per-screen-routing.md) and
-[ADR-0005](adr/0005-deep-links-follow-the-feature-flag.md).
+`MirroredSessionStore` moves the session from the legacy flat keys to a
+versioned v2 document in three release-gated phases: `EXPAND` (legacy
+canonical), `MIGRATE` (new canonical, legacy still written) and `CONTRACT` (new
+only). It reads with migrate-on-read and always clears both sides. See
+[ADR-0007](adr/0007-session-storage-expand-migrate-contract.md).
 
-Not every Flutter screen needs a flag: `/open/settings` always resolves to
-Flutter's `SettingsScreen`, which never had a native version.
+## Routing: one flag reader
 
-## Readiness
+`MigrationRoutes` is the only code that reads `MigrationFlagSet`. The Profile
+button, `DeepLinkRouter` and `SessionGate`'s sign-in redirect all get a
+`StartDestination` from it, so they cannot disagree. `Context.open(destination)`
+in `:app` is the only place that turns one into an Activity or an engine
+([ADR-0002](adr/0002-feature-flag-per-screen-routing.md),
+[ADR-0005](adr/0005-deep-links-follow-the-feature-flag.md)).
 
-Before `MainActivity` shows anything, `ReadinessPipeline` runs an ordered
-list of `ReadinessGate`s (`SessionPresentGate`, `MinimumAppVersionGate` in
-this reference) and stops at the first one that blocks. See
-[ADR-0004](adr/0004-readiness-pipeline.md).
+Going the other way, Flutter can open only what `NativeRoutes.ALLOWED` lists.
+That crossing is annotated `@TemporaryCrossing(removeWhen = …)`
+([ADR-0010](adr/0010-native-navigation-is-an-allowlisted-temporary-crossing.md)).
 
-## Testing strategy
+## The contract
 
-The riskiest parts of this pattern — the data contracts crossing the
-platform boundary, and the routing/readiness decisions — are unit-tested
-directly, without any UI or platform-channel mocking getting in the way of
-what's actually being proven:
+`contract/bridge_contract.json` defines the version, channels, method → channel
+mapping, payload keys, flow statuses and error codes. Kotlin and Dart each
+mirror it and each test against the file itself. Errors cross as stable codes
+and arrive in Dart as `BridgeException(BridgeErrorCode)`. See
+[ADR-0011](adr/0011-one-versioned-bridge-contract.md).
 
-- `legacy_shell/bridge-core` (plain JUnit, no Android framework dependency):
-  `SessionBridgeTest`, `DeepLinkRouterTest`, `ReadinessPipelineTest`.
-- `flutter_module`: `session_channel_test.dart` and
-  `initial_route_channel_test.dart` (decode logic tested directly, plus the
-  full `fetch()` path against a mocked platform channel for the
-  success/error/malformed-response cases).
+## Further reading
 
-See [ADR-0003](adr/0003-bridge-tested-in-isolation.md).
+- [Testing strategy](testing-strategy.md): parity vs revamp, the three-box
+  triage, and which test guards which risk.
+- [Where objects get created](di-decision-tree.md): the DI decision tree, and
+  why there's no container here.
 
-## What's a deliberate simplification here
+## Deliberate simplifications
 
-- `legacy_shell/app`'s real Flutter-engine wiring (`RealFlutterEngineHost`,
-  `ChannelRegistry`) is written against the real
-  `io.flutter.embedding.android.*` APIs for reviewability, but this repo's
-  CI doesn't attempt to build that module — the Flutter engine Maven
-  artifact it needs is only produced by `flutter build aar` against a real
-  local Flutter SDK. CI instead builds and tests `bridge-core` (the
-  pure-Kotlin logic `SessionBridge`/`DeepLinkRouter`/`ReadinessPipeline`
-  depend on) and `flutter_module` directly — see `.github/workflows/ci.yml`.
-- `MigrationFlags` is a hardcoded constant here, not a real remote-config
-  client. The pattern — one flag per screen, read at one call site — doesn't
-  change when it's backed by a real system.
-- `ReadinessGate.check()` is synchronous (see
-  [ADR-0004](adr/0004-readiness-pipeline.md)) — a deliberate simplification
-  to stay dependency-free, not a claim that real readiness checks are never
-  async.
+- CI doesn't build `:app`. The Flutter engine artifact it needs comes from
+  `flutter build aar` against a local SDK. CI builds and tests `bridge-core`
+  and `flutter_module`, which hold all the logic.
+- `MigrationFlags.current` is a constant, the migration phase is a constant,
+  and `FakeTokenRefresher` always succeeds. The patterns don't change when
+  these are backed by remote config and a real auth server.
+- Gates are synchronous, and `FlowResultBus` lives in process memory. Both are
+  discussed in their ADRs.

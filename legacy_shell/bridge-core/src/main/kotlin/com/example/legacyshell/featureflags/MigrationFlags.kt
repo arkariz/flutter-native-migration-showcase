@@ -1,18 +1,23 @@
 package com.example.legacyshell.featureflags
 
 /**
- * Per-screen switches deciding whether a screen shows its legacy native
- * implementation or its new Flutter one (see docs/adr/0002).
- *
- * In this reference repo these are hardcoded constants to keep the example
- * self-contained. In a real app this would be backed by whatever remote-config
- * or feature-flag system the app already uses — only where the boolean comes
- * from changes, never how it's used at the call site.
+ * Per-screen switches: legacy native implementation or new Flutter one (docs/adr/0002).
+ * Read in exactly one place — [com.example.legacyshell.navigation.MigrationRoutes] —
+ * so manual navigation, deep links and readiness redirects can't disagree.
+ */
+data class MigrationFlagSet(
+    val profileScreenOnFlutter: Boolean,
+    val loginScreenOnFlutter: Boolean,
+)
+
+/**
+ * Hardcoded here to keep the example self-contained; a real app would load this
+ * from its remote-config system. Flip [MigrationFlagSet.loginScreenOnFlutter] to
+ * exercise the Flutter sign-in → `session.commit` path (docs/adr/0008).
  */
 object MigrationFlags {
-    /**
-     * true = launch the Flutter Profile screen.
-     * false = launch the native `LegacyProfileActivity`.
-     */
-    const val profileScreenOnFlutter: Boolean = true
+    val current = MigrationFlagSet(
+        profileScreenOnFlutter = true,
+        loginScreenOnFlutter = false,
+    )
 }

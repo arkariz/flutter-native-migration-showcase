@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted — amended by [ADR-0012](0012-readiness-gates-return-typed-outcomes.md) (gates now return Proceed/Redirect/Halt and thread a typed context; `SessionPresentGate` became `SessionGate`).
 
 ## Context
 

@@ -2,11 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <application
+        android:name=".LegacyShellApplication"
         android:label="Legacy Shell"
         android:theme="@android:style/Theme.Material.Light.DarkActionBar">
 
+        <!-- Launcher: the readiness pipeline decides whether to show home or redirect (docs/adr/0012). -->
         <activity
-            android:name=".LoginActivity"
+            android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -14,9 +16,12 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".MainActivity" android:exported="false" />
+        <activity android:name=".LoginActivity" android:exported="false" />
 
         <activity android:name=".profile.LegacyProfileActivity" android:exported="false" />
+
+        <!-- Reachable from Flutter only via navigation.openNative's allowlist (docs/adr/0010). -->
+        <activity android:name=".help.LegacyHelpActivity" android:exported="false" />
 
         <!-- See docs/adr/0005 — resolves via DeepLinkRouter, no migration logic of its own. -->
         <activity
@@ -31,9 +36,9 @@
         </activity>
 
         <!--
-          In a real integration this is where io.flutter.embedding.android.FlutterActivity
-          (launched via FlutterActivity.withCachedEngine(ENGINE_ID).build(context)) would be
-          declared. See bridge/RealFlutterEngineHost.kt.
+          In a real integration io.flutter.embedding.android.FlutterActivity is declared
+          here; RealFlutterEngineHost launches it with withCachedEngine(...). See
+          bridge/RealFlutterEngineHost.kt.
         -->
 
     </application>

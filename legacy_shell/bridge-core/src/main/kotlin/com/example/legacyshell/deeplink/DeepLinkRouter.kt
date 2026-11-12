@@ -1,24 +1,19 @@
 package com.example.legacyshell.deeplink
 
+import com.example.legacyshell.navigation.MigrationRoutes
+import com.example.legacyshell.navigation.StartDestination
+
 /**
- * Resolves a deep link path to a [DeepLinkDestination], consulting the same
- * per-screen migration flag manual navigation uses — see docs/adr/0005.
- * Deep links are not a separate routing mechanism with their own rules.
+ * Resolves a deep link path using the same [MigrationRoutes] manual navigation uses
+ * (docs/adr/0005) — deep links are not a separate routing mechanism with their own
+ * rules. Returns null for a path nobody handles.
  */
-class DeepLinkRouter(private val profileScreenOnFlutter: Boolean) {
+class DeepLinkRouter(private val routes: MigrationRoutes) {
 
-    fun resolve(path: String): DeepLinkDestination = when (normalize(path)) {
-        "profile" -> if (profileScreenOnFlutter) {
-            DeepLinkDestination.Flutter("profile")
-        } else {
-            DeepLinkDestination.Legacy("profile")
-        }
-
-        // Never had a legacy implementation — always Flutter, flag-independent.
-        "settings" -> DeepLinkDestination.Flutter("settings")
-
-        else -> DeepLinkDestination.Unresolved
+    fun resolve(path: String): StartDestination? = when (path.trim('/').lowercase()) {
+        MigrationRoutes.Routes.PROFILE -> routes.profile()
+        MigrationRoutes.Routes.SETTINGS -> routes.settings()
+        MigrationRoutes.Routes.LOGIN -> routes.signIn()
+        else -> null
     }
-
-    private fun normalize(path: String): String = path.trim('/').lowercase()
 }

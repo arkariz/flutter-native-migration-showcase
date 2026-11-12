@@ -1,7 +1,7 @@
 package com.example.legacyshell.bridge
 
+import com.example.legacyshell.session
 import com.example.legacyshell.session.InMemorySessionStore
-import com.example.legacyshell.session.LegacySession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -9,38 +9,59 @@ import kotlin.test.assertFailsWith
 class SessionBridgeTest {
 
     @Test
-    fun `handleFetch returns the current session as a result map`() {
-        val store = InMemorySessionStore(
-            LegacySession(userId = "u1", displayName = "Ada Lovelace", authToken = "tok-123"),
-        )
-        val bridge = SessionBridge(store)
-
-        val result = bridge.handleFetch()
+    fun `fetch returns the session as a contract payload`() {
+        val bridge = SessionBridge(InMemorySessionStore(session()))
 
         assertEquals(
-            mapOf(
-                "userId" to "u1",
-                "displayName" to "Ada Lovelace",
-                "authToken" to "tok-123",
-            ),
-            result,
+            mapOf("userId" to "u1", "displayName" to "Ada Lovelace", "authToken" to "tok-1", "expiresAtEpochMillis" to 10_000L),
+            bridge.handleFetch(),
         )
     }
 
     @Test
-    fun `handleFetch throws NoSessionException when nobody is logged in`() {
-        val store = InMemorySessionStore(initial = null)
-        val bridge = SessionBridge(store)
+    fun `fetch fails with NO_SESSION when nobody is signed in`() {
+        val error = assertFailsWith<BridgeException> { SessionBridge(InMemorySessionStore()).handleFetch() }
 
-        assertFailsWith<SessionBridge.NoSessionException> { bridge.handleFetch() }
+        assertEquals(BridgeErrorCode.NO_SESSION, error.code)
     }
 
     @Test
-    fun `toResultMap never leaks extra fields beyond the documented contract`() {
-        val session = LegacySession(userId = "u2", displayName = "Grace Hopper", authToken = "tok-456")
+    fun `commit stores what Flutter sent`() {
+        val store = InMemorySessionStore()
 
-        val result = SessionBridge.toResultMap(session)
+        SessionBridge(store).handleCommit(
+            mapOf("userId" to "u2", "displayName" to "Grace", "authToken" to "tok-2", "expiresAtEpochMillis" to 99L),
+        )
 
-        assertEquals(setOf("userId", "displayName", "authToken"), result.keys)
+        assertEquals(session("u2", "Grace", "tok-2", 99L), store.read())
+    }
+
+    @Test
+    fun `commit accepts expiresAt as Int, the way StandardMessageCodec sends small Dart ints`() {
+        val store = InMemorySessionStore()
+
+        SessionBridge(store).handleCommit(
+            mapOf("userId" to "u2", "displayName" to "Grace", "authToken" to "tok-2", "expiresAtEpochMillis" to 99),
+        )
+
+        assertEquals(99L, store.read()?.expiresAtEpochMillis)
+    }
+
+    @Test
+    fun `commit rejects contract violations with INVALID_ARGUMENT and stores nothing`() {
+        val store = InMemorySessionStore()
+        val bad = listOf(
+            null,
+            "not a map",
+            mapOf("displayName" to "Grace", "authToken" to "t", "expiresAtEpochMillis" to 1L),
+            mapOf("userId" to "", "displayName" to "Grace", "authToken" to "t", "expiresAtEpochMillis" to 1L),
+            mapOf("userId" to "u", "displayName" to "Grace", "authToken" to "t", "expiresAtEpochMillis" to "soon"),
+        )
+
+        for (arguments in bad) {
+            val error = assertFailsWith<BridgeException>("for $arguments") { SessionBridge(store).handleCommit(arguments) }
+            assertEquals(BridgeErrorCode.INVALID_ARGUMENT, error.code)
+        }
+        assertEquals(null, store.read())
     }
 }

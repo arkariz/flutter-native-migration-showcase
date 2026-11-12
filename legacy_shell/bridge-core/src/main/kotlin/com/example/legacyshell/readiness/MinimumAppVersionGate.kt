@@ -1,14 +1,18 @@
 package com.example.legacyshell.readiness
 
-/** Blocks if [currentVersionCode] is below [minimumVersionCode] — a forced-update gate. */
+/** Halts with [Blocker.UpdateRequired] below [minimumVersionCode]. Runs before [SessionGate]: a forced update doesn't depend on being signed in. */
 class MinimumAppVersionGate(
     private val currentVersionCode: Int,
     private val minimumVersionCode: Int,
+    private val storeUrl: String,
 ) : ReadinessGate {
-    override fun check(): ReadinessResult =
+
+    override val name = "minimumAppVersion"
+
+    override fun check(context: ReadinessContext): GateResult =
         if (currentVersionCode >= minimumVersionCode) {
-            ReadinessResult.Pass
+            GateResult.Proceed(context)
         } else {
-            ReadinessResult.Block("App version $currentVersionCode is below minimum $minimumVersionCode")
+            GateResult.Halt(Blocker.UpdateRequired(storeUrl))
         }
 }

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "channels": {
+    "session": "migration_showcase/session",
+    "deeplink": "migration_showcase/deeplink",
+    "flow": "migration_showcase/flow"
+  },
+  "methods": {
+    "session.fetch": "session",
+    "session.commit": "session",
+    "deeplink.initialRoute": "deeplink",
+    "flow.complete": "flow",
+    "navigation.openNative": "flow"
+  },
+  "payloads": {
+    "session": ["userId", "displayName", "authToken", "expiresAtEpochMillis"],
+    "flowResult": ["status", "payload"],
+    "openNative": ["screen"]
+  },
+  "flowResultStatuses": ["completed", "cancelled"],
+  "errorCodes": [
+    "NO_SESSION",
+    "INVALID_ARGUMENT",
+    "DECODE_FAILED",
+    "UNKNOWN_ROUTE",
+    "NO_ACTIVE_FLOW"
+  ]
+}
