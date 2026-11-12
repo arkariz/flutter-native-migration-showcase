@@ -18,6 +18,18 @@
 
         <activity android:name=".profile.LegacyProfileActivity" android:exported="false" />
 
+        <!-- See docs/adr/0005 — resolves via DeepLinkRouter, no migration logic of its own. -->
+        <activity
+            android:name=".deeplink.DeepLinkActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="migrationshowcase" android:host="open" />
+            </intent-filter>
+        </activity>
+
         <!--
           In a real integration this is where io.flutter.embedding.android.FlutterActivity
           (launched via FlutterActivity.withCachedEngine(ENGINE_ID).build(context)) would be

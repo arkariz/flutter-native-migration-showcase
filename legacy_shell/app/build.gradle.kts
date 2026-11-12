@@ -22,6 +22,12 @@ android {
     }
     // AGP 9's built-in Kotlin support derives the Kotlin JVM target from
     // compileOptions above — no separate `kotlinOptions`/`kotlin {}` block.
+
+    buildFeatures {
+        // Off by default since AGP 8 — MainActivity's MinimumAppVersionGate
+        // reads BuildConfig.VERSION_CODE (see docs/adr/0004).
+        buildConfig = true
+    }
 }
 
 dependencies {
