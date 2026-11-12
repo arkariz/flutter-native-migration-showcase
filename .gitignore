@@ -1,0 +1,22 @@
+# Android (gradle/wrapper/ is intentionally NOT ignored — the wrapper jar is committed)
+legacy_shell/**/.gradle/
+legacy_shell/**/build/
+legacy_shell/local.properties
+legacy_shell/.idea/
+legacy_shell/*.iml
+legacy_shell/captures/
+legacy_shell/.cxx/
+
+# Flutter / Dart
+flutter_module/.dart_tool/
+flutter_module/.flutter-plugins
+flutter_module/.flutter-plugins-dependencies
+flutter_module/.packages
+flutter_module/build/
+flutter_module/.android/
+flutter_module/.ios/
+flutter_module/pubspec.lock
+
+# General
+.DS_Store
+*.log

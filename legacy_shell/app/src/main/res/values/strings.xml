@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Legacy Shell</string>
+    <string name="login_title">Legacy Shell — Login</string>
+    <string name="login_username_hint">Username</string>
+    <string name="login_button">Log in</string>
+    <string name="login_error_empty">Enter a username</string>
+
+    <string name="home_welcome">Welcome, %1$s</string>
+    <string name="home_profile_button">Profile</string>
+
+    <string name="legacy_profile_title">Profile (legacy, native)</string>
+</resources>
